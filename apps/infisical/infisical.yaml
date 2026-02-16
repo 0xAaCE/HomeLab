@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: infisical
-        image: infisical/infisical:v0.66.2-postgres
+        image: infisical/infisical:latest-postgres
         ports:
         - containerPort: 8080
           name: http
