@@ -1,0 +1,2 @@
+# Place Argo CD Application manifests here
+# Each app you want to deploy should have its own Application YAML
