@@ -1,0 +1,41 @@
+# Secrets and sensitive data
+secrets-backup.yaml
+*.secret.yaml
+.env
+*.pem
+*.key
+
+# Kubernetes configs with credentials
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Backup files
+backups/
+*.backup
+snapshots/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Terraform (if added later)
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Local testing
+test-output/
