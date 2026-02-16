@@ -20,23 +20,25 @@ spec:
         - containerPort: 8080
           name: http
         env:
-        # Database
-        - name: DB_CONNECTION_URI
-          value: "postgres://infisical:$(DB_PASSWORD)@postgres:5432/infisical"
+        # Secrets (must be defined first for variable substitution)
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
               name: infisical-secrets
               key: db-password
-
-        # Redis
-        - name: REDIS_URL
-          value: "redis://:$(REDIS_PASSWORD)@redis:6379"
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: infisical-secrets
               key: redis-password
+
+        # Database
+        - name: DB_CONNECTION_URI
+          value: "postgres://infisical:$(DB_PASSWORD)@postgres:5432/infisical"
+
+        # Redis
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis:6379"
 
         # Encryption
         - name: ENCRYPTION_KEY
