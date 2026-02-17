@@ -58,21 +58,22 @@ spec:
         - name: TELEMETRY_ENABLED
           value: "false"
 
-        livenessProbe:
-          httpGet:
-            path: /api/status
-            port: 8080
-          initialDelaySeconds: 120
-          periodSeconds: 10
-          failureThreshold: 5
+        # Probes temporarily disabled for initialization
+        # livenessProbe:
+        #   httpGet:
+        #     path: /api/status
+        #     port: 8080
+        #   initialDelaySeconds: 120
+        #   periodSeconds: 10
+        #   failureThreshold: 5
 
-        readinessProbe:
-          httpGet:
-            path: /api/status
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 5
-          failureThreshold: 12
+        # readinessProbe:
+        #   httpGet:
+        #     path: /api/status
+        #     port: 8080
+        #   initialDelaySeconds: 30
+        #   periodSeconds: 5
+        #   failureThreshold: 12
 
         resources:
           requests:
