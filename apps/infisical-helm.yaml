@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://dl.cloudsmith.io/public/infisical/helm-charts/helm/charts/
     chart: infisical-standalone
-    targetRevision: 0.5.4  # Latest stable version
+    targetRevision: 1.7.2
     helm:
       values: |
         infisical:
