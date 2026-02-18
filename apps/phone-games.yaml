@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:0xAaCE/phone_games.git
+    repoURL: git@github.com:0xAaCE/phone-games.git
     targetRevision: main
     path: ops/k8s/base
   destination:
