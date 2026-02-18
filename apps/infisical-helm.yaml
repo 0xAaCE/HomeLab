@@ -21,6 +21,9 @@ spec:
         ingress:
           enabled: false
 
+        ingress-nginx:
+          enabled: false
+
         # Disable embedded databases - use our own
         postgresql:
           enabled: false
