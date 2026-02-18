@@ -12,10 +12,7 @@ spec:
     helm:
       values: |
         infisical:
-          image:
-            repository: infisical/infisical
-            tag: "v0.66.2-postgres"
-            pullPolicy: IfNotPresent
+          # Let Helm chart use its default tested image
           replicaCount: 1
 
           # Use existing secret with connection URIs
