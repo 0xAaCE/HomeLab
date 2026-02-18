@@ -4,26 +4,67 @@ GitOps-based homelab infrastructure using k3s and Argo CD for fully reproducible
 
 ## Table of Contents
 
+- [Architecture Overview](#architecture-overview)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Repository Structure](#repository-structure)
-- [Adding New Applications](#adding-new-applications)
+- [Components](#components)
 - [Secrets Management](#secrets-management)
+- [Adding New Applications](#adding-new-applications)
 - [Backup and Disaster Recovery](#backup-and-disaster-recovery)
 - [Operational Tasks](#operational-tasks)
-- [Components](#components)
+- [Troubleshooting](#troubleshooting)
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Cloudflare Tunnel                     │
+│        (Secure external access without port forwarding) │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+┌──────────────────────┴──────────────────────────────────┐
+│                    k3s Cluster                           │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  Argo CD (GitOps Controller)                       │ │
+│  │  - Monitors Git repository                         │ │
+│  │  - Auto-syncs cluster state                        │ │
+│  │  - App-of-apps pattern                             │ │
+│  └────────────────────────────────────────────────────┘ │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  Infisical (Secrets Manager)                       │ │
+│  │  - PostgreSQL (persistent secret storage)          │ │
+│  │  - Redis (caching layer)                           │ │
+│  │  - Web UI for secret management                    │ │
+│  └────────────────────────────────────────────────────┘ │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  Infisical Kubernetes Operator                     │ │
+│  │  - Syncs secrets from Infisical → K8s Secrets      │ │
+│  │  - Auto-updates on secret changes                  │ │
+│  │  - Machine Identity authentication                 │ │
+│  └────────────────────────────────────────────────────┘ │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  Your Applications                                 │ │
+│  │  - Use secrets synced by operator                  │ │
+│  │  - Managed via GitOps                              │ │
+│  └────────────────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────┘
+```
 
 ## Prerequisites
 
 **Hardware/VM Requirements:**
 - 2+ CPU cores
-- 4GB+ RAM (8GB recommended)
-- 20GB+ disk space
+- 4GB+ RAM (8GB recommended for Infisical + apps)
+- 40GB+ disk space (includes database storage)
 - Ubuntu 20.04+ or similar Linux distribution
 
 **Software:**
 - `curl` installed
-- `kubectl` (installed by setup script)
+- `git` installed
 - SSH key configured for GitHub (for private repos)
 
 **External Services:**
@@ -41,6 +82,10 @@ cd HomeLab
 
 # Install k3s + Argo CD
 ./scripts/setup.sh
+
+# Set up kubectl access
+sudo cat /etc/rancher/k3s/k3s.yaml > ~/.kube/config
+chmod 600 ~/.kube/config
 ```
 
 ### 2. Configure Argo CD
@@ -69,17 +114,99 @@ kubectl apply -f argocd/app-of-apps.yaml
 kubectl get applications -n argocd
 ```
 
-### 4. Access Argo CD UI
+### 4. Set Up Secrets Management
+
+#### Create Cloudflare Tunnel Token
+
+1. Go to Cloudflare Zero Trust Dashboard → Networks → Tunnels
+2. Create a new tunnel or use existing
+3. Copy the tunnel token
+4. Create Kubernetes secret:
+
+```bash
+kubectl create namespace cloudflared
+kubectl create secret generic cloudflared-token \
+  -n cloudflared \
+  --from-literal=token='YOUR_TUNNEL_TOKEN_HERE'
+```
+
+5. Configure tunnel routes in Cloudflare Dashboard:
+   - `argo.yourdomain.com` → `http://argocd-server.argocd.svc.cluster.local:80`
+   - `secrets.yourdomain.com` → `http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080`
+
+#### Set Up Infisical
+
+Wait for Infisical to deploy (check with `kubectl get pods -n infisical`), then:
+
+1. Access Infisical at `https://secrets.yourdomain.com`
+2. Create your admin account
+3. Create a project for your secrets
+
+#### Configure Infisical Operator Authentication
+
+1. In Infisical UI, navigate to: **Project Settings** → **Access Control** → **Machine Identities**
+2. Click **Create Identity**:
+   - Name: `kubernetes-operator`
+   - Choose appropriate organization role
+3. Add **Universal Auth** method:
+   - Access Token TTL: `2592000` (30 days)
+   - Access Token Max TTL: `2592000`
+   - Trusted IPs: `0.0.0.0/0` (or restrict to cluster IPs)
+   - **Save the Client ID and Client Secret**
+4. Grant **Project Access**:
+   - Select your project
+   - Choose environments (dev, staging, prod)
+   - Set role: Viewer or higher
+
+5. Create Kubernetes secret with Machine Identity credentials:
+
+```bash
+kubectl create secret generic infisical-universal-auth \
+  -n default \
+  --from-literal=clientId='YOUR_CLIENT_ID' \
+  --from-literal=clientSecret='YOUR_CLIENT_SECRET'
+```
+
+#### Create Database Credentials
+
+```bash
+# Generate secure passwords
+DB_PASSWORD=$(openssl rand -hex 32)
+REDIS_PASSWORD=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(openssl rand -hex 16)
+AUTH_SECRET=$(openssl rand -base64 32)
+
+# Create database secrets
+kubectl create secret generic db-credentials -n infisical \
+  --from-literal=password="$DB_PASSWORD"
+
+kubectl create secret generic redis-credentials -n infisical \
+  --from-literal=password="$REDIS_PASSWORD"
+
+# Create Infisical secrets
+kubectl create secret generic infisical-secrets -n infisical \
+  --from-literal=ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  --from-literal=AUTH_SECRET="$AUTH_SECRET" \
+  --from-literal=SITE_URL='https://secrets.yourdomain.com' \
+  --from-literal=DB_CONNECTION_URI="postgresql://infisical:${DB_PASSWORD}@postgres:5432/infisical" \
+  --from-literal=REDIS_URL="redis://:${REDIS_PASSWORD}@redis:6379"
+
+# IMPORTANT: Save these credentials securely!
+echo "Database Password: $DB_PASSWORD" > ~/infisical-credentials.txt
+echo "Redis Password: $REDIS_PASSWORD" >> ~/infisical-credentials.txt
+echo "Encryption Key: $ENCRYPTION_KEY" >> ~/infisical-credentials.txt
+echo "Auth Secret: $AUTH_SECRET" >> ~/infisical-credentials.txt
+chmod 600 ~/infisical-credentials.txt
+```
+
+### 5. Access Argo CD UI
 
 ```bash
 # Get admin password
 kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 -d && echo
 
-# Port forward to access UI
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-
-# Open browser to https://localhost:8080
+# Access via Cloudflare Tunnel at https://argo.yourdomain.com
 # Username: admin
 # Password: (from command above)
 ```
@@ -89,29 +216,201 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 HomeLab/
 ├── scripts/
-│   └── setup.sh              # k3s + Argo CD installation
+│   └── setup.sh                       # k3s + Argo CD installation
 ├── argocd/
-│   └── app-of-apps.yaml      # Root application (GitOps bootstrap)
+│   ├── app-of-apps.yaml               # Root application (GitOps bootstrap)
+│   ├── config/
+│   │   └── argocd-cmd-params-cm.yaml  # Argo CD server configuration
+│   └── README.md                      # Argo CD setup guide
 ├── apps/
-│   ├── <app-name>.yaml       # Argo CD Application definition
-│   └── <app-name>/           # Application manifests
-│       ├── kustomization.yaml
-│       ├── namespace.yaml
-│       └── *.yaml            # Kubernetes resources
-└── README.md
+│   ├── cloudflared.yaml               # Cloudflare Tunnel application
+│   ├── cloudflared/                   # Tunnel manifests
+│   ├── infisical-helm.yaml            # Infisical application
+│   ├── infisical-db.yaml              # Database application
+│   ├── infisical-db/                  # PostgreSQL & Redis manifests
+│   ├── infisical-operator.yaml        # Operator application
+│   ├── infisical-operator-config.yaml # Operator config application
+│   ├── infisical-operator/            # Operator configuration
+│   └── <your-app>.yaml                # Your application definitions
+├── README.md                          # This file
+└── SECRETS.md                         # Secrets management guide
 ```
+
+## Components
+
+| Component | Version | Purpose | Status |
+|-----------|---------|---------|--------|
+| **k3s** | Latest | Lightweight Kubernetes distribution | ✅ Running |
+| **Argo CD** | v3.3.0 | GitOps continuous delivery tool | ✅ Running |
+| **Cloudflared** | 2024.12.2 | Secure tunnel for external access | ✅ Running |
+| **Infisical** | 1.7.2 | Self-hosted secrets management platform | ✅ Running |
+| **PostgreSQL** | 16-alpine | Database for Infisical | ✅ Running |
+| **Redis** | 7.2-alpine | Caching layer for Infisical | ✅ Running |
+| **Infisical Operator** | 0.10.19 | Syncs secrets to Kubernetes | ✅ Running |
+
+### Component Details
+
+#### k3s
+- Minimal resource usage, perfect for homelab
+- Built-in load balancer (servicelb)
+- Automatic snapshots for backup
+
+#### Argo CD
+- Declarative GitOps
+- Automatic sync from Git
+- App-of-apps pattern for managing all applications
+- Easy rollbacks
+
+#### Cloudflare Tunnel
+- Zero-trust access without port forwarding
+- No public IP exposure
+- Automatic TLS certificates
+- DDoS protection
+
+#### Infisical
+- Self-hosted secrets management
+- Web UI for managing secrets
+- Project and environment isolation
+- API access for automation
+- Kubernetes operator integration
+
+#### Infisical Kubernetes Operator
+- Automatically syncs secrets from Infisical to Kubernetes Secrets
+- Supports dynamic secrets and push/pull operations
+- Machine Identity authentication
+- Auto-rotation capabilities
+
+## Secrets Management
+
+This homelab uses **Infisical** as the centralized secrets management platform.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│  Infisical (Source of Truth)               │
+│  - Store secrets in projects/environments  │
+│  - Manage via Web UI                       │
+└──────────────────┬──────────────────────────┘
+                   │
+                   │ Machine Identity Auth
+                   │
+┌──────────────────▼──────────────────────────┐
+│  Infisical Kubernetes Operator              │
+│  - Watches InfisicalSecret CRDs             │
+│  - Syncs to Kubernetes Secrets              │
+└──────────────────┬──────────────────────────┘
+                   │
+                   │ Creates/Updates
+                   │
+┌──────────────────▼──────────────────────────┐
+│  Kubernetes Secrets                         │
+│  - Used by applications                     │
+│  - Auto-updated on Infisical changes        │
+└─────────────────────────────────────────────┘
+```
+
+### Using Infisical for Application Secrets
+
+**Step 1: Add secrets to Infisical**
+
+1. Go to Infisical Web UI (`https://secrets.yourdomain.com`)
+2. Navigate to your project
+3. Select environment (dev/staging/prod)
+4. Add secrets with key-value pairs
+
+**Step 2: Create InfisicalSecret CRD**
+
+Create `apps/myapp/infisical-secret.yaml`:
+
+```yaml
+apiVersion: secrets.infisical.com/v1alpha1
+kind: InfisicalSecret
+metadata:
+  name: myapp-secrets
+  namespace: myapp
+spec:
+  # Sync interval (check for updates)
+  resyncInterval: 60
+
+  authentication:
+    universalAuth:
+      secretsScope:
+        projectSlug: your-project-slug  # From Infisical project URL
+        envSlug: prod                   # Environment: dev, staging, prod
+        secretsPath: "/"                # Path within environment
+      credentialsRef:
+        secretName: infisical-universal-auth
+        secretNamespace: default
+
+  managedSecretReference:
+    secretName: myapp-secrets           # K8s Secret to create
+    secretNamespace: myapp
+    creationPolicy: "Orphan"            # Keep secret if CRD is deleted
+```
+
+**Step 3: Reference secrets in your application**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  namespace: myapp
+spec:
+  template:
+    spec:
+      containers:
+      - name: myapp
+        image: myapp:v1.0.0
+        env:
+        # Option 1: Individual env vars
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: myapp-secrets
+              key: API_KEY
+
+        # Option 2: All secrets as env vars
+        envFrom:
+        - secretRef:
+            name: myapp-secrets
+
+        # Option 3: Mount as files
+        volumeMounts:
+        - name: secrets
+          mountPath: "/etc/secrets"
+          readOnly: true
+
+      volumes:
+      - name: secrets
+        secret:
+          secretName: myapp-secrets
+```
+
+**Benefits:**
+- ✅ Secrets stored centrally in Infisical
+- ✅ Automatic sync to Kubernetes
+- ✅ No manual kubectl commands needed
+- ✅ Audit trail in Infisical
+- ✅ Environment-specific secrets
+- ✅ GitOps-friendly (CRDs in Git, not secrets)
+
+See [SECRETS.md](./SECRETS.md) for detailed secrets management guide.
 
 ## Adding New Applications
 
-### Step 1: Create Application Directory
+### Method 1: Kustomize-based Application
+
+**Step 1: Create application directory**
 
 ```bash
 mkdir -p apps/myapp
 ```
 
-### Step 2: Create Kubernetes Manifests
+**Step 2: Create manifests**
 
-Create `apps/myapp/namespace.yaml`:
+`apps/myapp/namespace.yaml`:
 ```yaml
 apiVersion: v1
 kind: Namespace
@@ -119,7 +418,7 @@ metadata:
   name: myapp
 ```
 
-Create `apps/myapp/deployment.yaml`:
+`apps/myapp/deployment.yaml`:
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -150,7 +449,7 @@ spec:
             cpu: "100m"
 ```
 
-Create `apps/myapp/kustomization.yaml`:
+`apps/myapp/kustomization.yaml`:
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -159,9 +458,9 @@ resources:
   - deployment.yaml
 ```
 
-### Step 3: Create Argo CD Application
+**Step 3: Create Argo CD Application**
 
-Create `apps/myapp.yaml`:
+`apps/myapp.yaml`:
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -179,75 +478,72 @@ spec:
     namespace: myapp
   syncPolicy:
     automated:
-      prune: true      # Delete resources removed from git
-      selfHeal: true   # Sync when cluster state drifts
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
 ```
 
-### Step 4: Deploy
+**Step 4: Deploy**
 
 ```bash
-# Commit and push
 git add apps/myapp apps/myapp.yaml
 git commit -m "Add myapp application"
 git push
 
-# Argo CD will automatically sync within 3 minutes
-# Or trigger manually:
-argocd app sync apps
+# Argo CD auto-syncs within 3 minutes
 ```
 
-## Secrets Management
+### Method 2: Helm-based Application
 
-**⚠️ NEVER commit secrets to Git in plain text**
-
-### Current Approach: Manual Secret Creation
-
-For applications requiring secrets (like cloudflared):
-
-```bash
-# Create namespace first
-kubectl create namespace cloudflared
-
-# Create secret manually
-kubectl create secret generic cloudflared-token \
-  -n cloudflared \
-  --from-literal=token='YOUR_TUNNEL_TOKEN_HERE'
-
-# Verify secret exists
-kubectl get secret cloudflared-token -n cloudflared
-```
-
-### Recommended: Use Sealed Secrets (Future Enhancement)
-
-For production setups, consider:
-- **Sealed Secrets**: Encrypt secrets that can be safely stored in Git
-- **External Secrets Operator**: Sync from external secret stores (Vault, AWS Secrets Manager)
-- **SOPS**: Encrypt YAML files with age or PGP
-
-Example workflow with Sealed Secrets:
-```bash
-# Install sealed-secrets controller
-kubectl apply -f apps/sealed-secrets.yaml
-
-# Create sealed secret
-echo -n 'YOUR_TOKEN' | kubectl create secret generic myapp-secret \
-  --dry-run=client --from-file=token=/dev/stdin -o yaml | \
-  kubeseal -o yaml > apps/myapp/sealed-secret.yaml
-
-# Commit sealed secret (safe to commit)
-git add apps/myapp/sealed-secret.yaml
-git commit -m "Add encrypted secret"
+`apps/myapp-helm.yaml`:
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://charts.example.com
+    chart: myapp
+    targetRevision: 1.2.3  # Pin chart version
+    helm:
+      values: |
+        replicaCount: 1
+        image:
+          repository: myapp
+          tag: "v1.0.0"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: myapp
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
 ```
 
 ## Backup and Disaster Recovery
 
-### Manual Backup
+### What Gets Backed Up Automatically
 
-**1. Backup k3s etcd (cluster state):**
+✅ **Applications** - All configs in Git
+✅ **Argo CD state** - k3s etcd snapshots
+✅ **Infisical secrets** - PostgreSQL database with persistent volumes
+
+### Manual Backups
+
+**1. K3s etcd (cluster state):**
+
 ```bash
-# k3s automatically creates snapshots in /var/lib/rancher/k3s/server/db/snapshots/
+# k3s auto-creates snapshots in /var/lib/rancher/k3s/server/db/snapshots/
 sudo ls -lah /var/lib/rancher/k3s/server/db/snapshots/
 
 # Manual snapshot
@@ -257,41 +553,71 @@ sudo k3s etcd-snapshot save --name manual-backup-$(date +%Y%m%d-%H%M%S)
 sudo cp /var/lib/rancher/k3s/server/db/snapshots/* ~/backups/
 ```
 
-**2. Backup manually created secrets:**
-```bash
-# Export all secrets (⚠️ contains sensitive data)
-kubectl get secrets --all-namespaces -o yaml > secrets-backup.yaml
+**2. Infisical Database (PostgreSQL):**
 
-# Store securely (encrypted external storage)
+```bash
+# Backup PostgreSQL database
+kubectl exec -n infisical postgres-0 -- pg_dump -U infisical infisical > infisical-backup-$(date +%Y%m%d).sql
+
+# Or backup the entire PVC
+kubectl get pvc -n infisical
+# Use volume snapshot tools or manual copy
 ```
 
-**3. GitOps handles the rest**
-All application configurations are in Git, so your infrastructure is already backed up.
+**3. Critical Kubernetes Secrets:**
 
-### Disaster Recovery
-
-**Full cluster rebuild:**
 ```bash
-# 1. Fresh install
-./scripts/setup.sh
+# Backup operator auth secret
+kubectl get secret infisical-universal-auth -n default -o yaml > infisical-auth-backup.yaml
 
-# 2. Restore manually created secrets
+# Backup database credentials
+kubectl get secret db-credentials redis-credentials -n infisical -o yaml > infisical-db-creds-backup.yaml
+
+# Backup cloudflared token
+kubectl get secret cloudflared-token -n cloudflared -o yaml > cloudflared-backup.yaml
+
+# ⚠️ ENCRYPT these backups before storing!
+gpg --symmetric --cipher-algo AES256 *-backup.yaml
+```
+
+### Full Cluster Restore
+
+**Option 1: From Git (recommended for most cases)**
+
+```bash
+# 1. Fresh k3s install
+./scripts/setup.sh
+sudo cat /etc/rancher/k3s/k3s.yaml > ~/.kube/config
+
+# 2. Restore critical secrets
+gpg --decrypt secrets-backup.yaml.gpg > secrets-backup.yaml
 kubectl apply -f secrets-backup.yaml
 
-# 3. Bootstrap GitOps (automatically restores all apps)
+# 3. Configure Argo CD
+kubectl apply -f argocd/config/argocd-cmd-params-cm.yaml
+kubectl rollout restart deployment argocd-server -n argocd
+
+kubectl create secret generic homelab-repo -n argocd \
+  --from-literal=type=git \
+  --from-literal=url=git@github.com:0xAaCE/HomeLab.git \
+  --from-file=sshPrivateKey=$HOME/.ssh/id_ed25519 \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl label secret homelab-repo -n argocd argocd.argoproj.io/secret-type=repository
+
+# 4. Bootstrap GitOps (restores all apps)
 kubectl apply -f argocd/app-of-apps.yaml
 
-# 4. Verify all applications sync
-kubectl get applications -n argocd
-argocd app sync apps
+# 5. Restore Infisical database (if needed)
+kubectl exec -n infisical postgres-0 -- psql -U infisical infisical < infisical-backup.sql
 ```
 
-**Restore from etcd snapshot:**
+**Option 2: From etcd snapshot (for complete state restore)**
+
 ```bash
 # Uninstall k3s
 /usr/local/bin/k3s-uninstall.sh
 
-# Reinstall with snapshot restore
+# Reinstall with snapshot
 curl -sfL https://get.k3s.io | sh -s - server \
   --cluster-reset \
   --cluster-reset-restore-path=/path/to/snapshot
@@ -305,21 +631,21 @@ curl -sfL https://get.k3s.io | sh -s - server \
 # List all applications
 kubectl get applications -n argocd
 
-# Get detailed app info
-argocd app get <app-name>
+# Detailed app status
+kubectl describe application <app-name> -n argocd
 
-# View sync status
-argocd app list
+# Check pods
+kubectl get pods -n <namespace>
 ```
 
 ### Manual Sync
 
 ```bash
-# Sync specific application
-argocd app sync <app-name>
+# Sync specific app
+kubectl patch application <app-name> -n argocd \
+  --type merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"normal"}}}'
 
-# Sync all applications
-argocd app sync -l app.kubernetes.io/instance=apps
+# Via Argo CD UI: Click "Sync" button
 ```
 
 ### View Logs
@@ -328,14 +654,17 @@ argocd app sync -l app.kubernetes.io/instance=apps
 # Application logs
 kubectl logs -n <namespace> -l app=<app-name> --tail=100 -f
 
-# Argo CD logs
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server --tail=100 -f
+# Infisical logs
+kubectl logs -n infisical -l app.kubernetes.io/name=infisical-standalone --tail=100 -f
+
+# Operator logs
+kubectl logs -n infisical-operator-system -l control-plane=controller-manager --tail=100 -f
 ```
 
 ### Update Application
 
 ```bash
-# Edit manifests locally
+# Edit manifests
 vim apps/myapp/deployment.yaml
 
 # Commit and push
@@ -343,113 +672,138 @@ git add apps/myapp/deployment.yaml
 git commit -m "Update myapp configuration"
 git push
 
-# Argo CD syncs automatically (or manual sync)
-argocd app sync myapp
+# Argo CD auto-syncs within 3 minutes
 ```
 
-### Rollback Application
+### Verify Infisical Operator Sync
 
 ```bash
-# View history
-argocd app history myapp
+# Check InfisicalSecret status
+kubectl get infisicalsecret -n <namespace>
 
-# Rollback to previous version
-argocd app rollback myapp <history-id>
+# Detailed status
+kubectl describe infisicalsecret <name> -n <namespace>
+
+# Verify synced Kubernetes Secret
+kubectl get secret <managed-secret-name> -n <namespace> -o yaml
 ```
-
-### Delete Application
-
-```bash
-# Remove from Git
-git rm apps/myapp.yaml
-git rm -r apps/myapp/
-git commit -m "Remove myapp"
-git push
-
-# Argo CD will automatically prune resources
-# Or delete manually:
-argocd app delete myapp
-```
-
-## Components
-
-| Component | Version | Purpose |
-|-----------|---------|---------|
-| **k3s** | Latest | Lightweight Kubernetes distribution |
-| **Argo CD** | v3.3.0 | GitOps continuous delivery tool |
-| **Cloudflared** | Latest* | Secure tunnel for external access |
-
-*⚠️ Recommendation: Pin to specific version for reproducibility
-
-### Why These Tools?
-
-- **k3s**: Minimal resource usage, perfect for homelab environments
-- **Argo CD**: Declarative GitOps, automatic sync, easy rollbacks
-- **Cloudflared**: Zero-trust access without exposing ports/IP addresses
 
 ## Troubleshooting
 
-### Argo CD ERR_TOO_MANY_REDIRECTS
+### Argo CD Issues
 
-If accessing Argo CD through Cloudflare Tunnel causes redirect loops:
+**ERR_TOO_MANY_REDIRECTS**
 
 ```bash
-# Ensure Argo CD is in insecure mode (required for reverse proxy)
+# Ensure insecure mode is enabled
 kubectl apply -f argocd/config/argocd-cmd-params-cm.yaml
 kubectl rollout restart deployment argocd-server -n argocd
+
+# Verify Cloudflare Tunnel points to port 80:
+# http://argocd-server.argocd.svc.cluster.local:80
 ```
 
-**Important:** Update your Cloudflare Tunnel to use port **80**:
-- Change: `http://argocd-server.argocd.svc.cluster.local:443` ❌
-- To: `http://argocd-server.argocd.svc.cluster.local:80` ✅
-
-The reverse proxy handles TLS, so Argo CD serves plain HTTP on port 80.
-
-### Argo CD not syncing
+**Repository SSH errors**
 
 ```bash
-# Check app status
-kubectl get applications -n argocd
-argocd app get <app-name>
-
-# Check ArgoCD logs
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
-
-# Force refresh
-argocd app get <app-name> --refresh
-```
-
-### Repository SSH access errors
-
-If apps show "ComparisonError" with SSH agent errors:
-
-```bash
-# Verify SSH secret exists
+# Verify SSH secret
 kubectl get secret homelab-repo -n argocd
 
-# Recreate if needed (see Quick Start step 2)
+# Recreate if needed
+kubectl delete secret homelab-repo -n argocd
 kubectl create secret generic homelab-repo -n argocd \
   --from-literal=type=git \
   --from-literal=url=git@github.com:0xAaCE/HomeLab.git \
-  --from-file=sshPrivateKey=$HOME/.ssh/id_ed25519 \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --from-file=sshPrivateKey=$HOME/.ssh/id_ed25519
 kubectl label secret homelab-repo -n argocd argocd.argoproj.io/secret-type=repository
 ```
 
-### Pod not starting
+### Infisical Issues
+
+**Infisical pod not starting**
 
 ```bash
 # Check pod status
-kubectl get pods -n <namespace>
+kubectl get pods -n infisical
 
-# Describe pod for events
-kubectl describe pod <pod-name> -n <namespace>
+# View logs
+kubectl logs -n infisical <infisical-pod-name>
 
-# Check logs
-kubectl logs <pod-name> -n <namespace>
+# Check database connectivity
+kubectl exec -n infisical postgres-0 -- psql -U infisical -d infisical -c "\dt"
+
+# Verify secrets exist
+kubectl get secrets -n infisical
 ```
 
-### k3s not responding
+**Cannot access Infisical UI**
+
+1. Check pod is running: `kubectl get pods -n infisical`
+2. Verify service: `kubectl get svc -n infisical`
+3. Check Cloudflare Tunnel configuration
+4. Test internal connectivity:
+   ```bash
+   kubectl run curl-test --image=curlimages/curl --rm -i --restart=Never -- \
+     curl -s http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080/api/status
+   ```
+
+### Infisical Operator Issues
+
+**Secrets not syncing**
+
+```bash
+# Check operator is running
+kubectl get pods -n infisical-operator-system
+
+# Check InfisicalSecret status
+kubectl describe infisicalsecret <name> -n <namespace>
+
+# Verify authentication secret exists
+kubectl get secret infisical-universal-auth -n default
+
+# Check operator logs
+kubectl logs -n infisical-operator-system -l control-plane=controller-manager --tail=100
+```
+
+**Authentication errors**
+
+```bash
+# Verify Machine Identity credentials in Infisical UI
+# Re-create authentication secret with correct Client ID/Secret
+kubectl delete secret infisical-universal-auth -n default
+kubectl create secret generic infisical-universal-auth -n default \
+  --from-literal=clientId='YOUR_CLIENT_ID' \
+  --from-literal=clientSecret='YOUR_CLIENT_SECRET'
+```
+
+### Database Issues
+
+**PostgreSQL connection failures**
+
+```bash
+# Check PostgreSQL pod
+kubectl get pod postgres-0 -n infisical
+
+# Test connection
+kubectl exec -n infisical postgres-0 -- psql -U infisical -d infisical -c "SELECT 1"
+
+# Check logs
+kubectl logs -n infisical postgres-0
+```
+
+**Redis connection failures**
+
+```bash
+# Check Redis pod
+kubectl get pods -n infisical -l app=redis
+
+# Test connection
+kubectl exec -n infisical <redis-pod-name> -- redis-cli ping
+```
+
+### General k3s Issues
+
+**k3s not responding**
 
 ```bash
 # Check k3s service
@@ -460,16 +814,43 @@ sudo systemctl restart k3s
 
 # Check node status
 kubectl get nodes
+
+# View k3s logs
+sudo journalctl -u k3s -n 100 -f
 ```
+
+**Out of disk space**
+
+```bash
+# Check disk usage
+df -h
+
+# Clean up Docker images
+sudo k3s crictl rmi --prune
+
+# Clean up old etcd snapshots
+sudo rm /var/lib/rancher/k3s/server/db/snapshots/etcd-snapshot-old-*
+```
+
+## Best Practices
+
+1. **Always pin versions** - Avoid `:latest` tags
+2. **Set resource limits** - Prevent resource exhaustion
+3. **Use meaningful commit messages** - Helps with debugging
+4. **Test locally first** - Before pushing to production
+5. **Monitor disk usage** - Databases grow over time
+6. **Backup regularly** - Automate backups with cron jobs
+7. **Rotate secrets** - Update Infisical secrets periodically
+8. **Document changes** - Update README for significant changes
 
 ## Contributing
 
 When adding new applications:
-1. Always pin image versions (avoid `:latest`)
-2. Include resource limits
-3. Test locally before pushing
-4. Document any required manual secrets
-5. Use meaningful commit messages
+1. Pin all image and chart versions
+2. Include resource requests/limits
+3. Add secrets via Infisical + operator
+4. Document any special setup requirements
+5. Test thoroughly before committing
 
 ## License
 
