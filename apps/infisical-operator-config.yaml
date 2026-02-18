@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infisical-operator-config
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:0xAaCE/HomeLab.git
+    targetRevision: main
+    path: apps/infisical-operator
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infisical-operator-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

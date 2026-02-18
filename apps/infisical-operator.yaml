@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infisical-operator
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://dl.cloudsmith.io/public/infisical/helm-charts/helm/charts/
+    chart: secrets-operator
+    targetRevision: 0.10.19
+    helm:
+      values: |
+        # Cluster-wide operator deployment
+        controllerManager:
+          manager:
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+              limits:
+                memory: "128Mi"
+                cpu: "200m"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infisical-operator-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

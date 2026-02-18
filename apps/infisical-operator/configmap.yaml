@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infisical-config
+  namespace: infisical-operator-system
+data:
+  # Point to our self-hosted Infisical instance
+  hostAPI: https://secrets.0xaace.xyz/api
