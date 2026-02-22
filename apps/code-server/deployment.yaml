@@ -44,5 +44,5 @@ spec:
           type: DirectoryOrCreate
       - name: host-documents
         hostPath:
-          path: /home/aacevedo/Documents
+          path: /home/aace/Documents
           type: Directory
