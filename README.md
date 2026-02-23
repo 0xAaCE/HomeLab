@@ -9,6 +9,7 @@ GitOps-based homelab infrastructure using k3s and Argo CD for fully reproducible
 - [Quick Start](#quick-start)
 - [Remote Access via Cloudflare WARP](#6-set-up-remote-access-via-cloudflare-warp)
 - [AWS Lightweight Deployment](#aws-lightweight-deployment)
+- [SSH Hardening](#ssh-hardening)
 - [Repository Structure](#repository-structure)
 - [Components](#components)
 - [Secrets Management](#secrets-management)
@@ -308,12 +309,45 @@ The script installs k3s, prompts for the tunnel token, and deploys cloudflared +
 2. Connect via WARP and SSH into the instance
 3. Access code-server at its ClusterIP (`kubectl -n code-server get svc`)
 
+## SSH Hardening
+
+Disable password authentication and allow only SSH key-based login.
+
+### 1. Add your public keys to the repo
+
+Place `.pub` files in `keys/ssh/`:
+
+```bash
+# Example: copy a key from your local machine
+cp ~/.ssh/id_ed25519.pub keys/ssh/my-laptop.pub
+git add keys/ssh/my-laptop.pub && git commit -m "Add laptop SSH key" && git push
+```
+
+### 2. Run the hardening script
+
+```bash
+# On the remote machine (after cloning/pulling the repo)
+sudo ./scripts/harden-ssh.sh
+```
+
+The script will:
+1. List all `.pub` files in `keys/ssh/` and let you pick which ones to install
+2. Install selected keys to `~/.ssh/authorized_keys`
+3. Ask to disable password authentication (backs up sshd_config first)
+
+To install keys for a specific user: `sudo ./scripts/harden-ssh.sh ubuntu`
+
+> **Important:** Keep your current SSH session open after running. Test with a new connection before closing to make sure key auth works.
+
 ## Repository Structure
 
 ```
 HomeLab/
+├── keys/
+│   └── ssh/                            # SSH public keys (.pub files)
 ├── scripts/
-│   └── setup.sh                       # k3s + Argo CD installation
+│   ├── setup.sh                       # k3s + Argo CD installation
+│   └── harden-ssh.sh                  # Disable password auth, install SSH keys
 ├── argocd/
 │   ├── app-of-apps.yaml               # Root application (GitOps bootstrap)
 │   ├── config/
