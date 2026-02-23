@@ -13,7 +13,7 @@ echo "=== Updating package index ==="
 sudo apt-get update
 
 echo "=== Installing zsh ==="
-sudo apt-get install -y zsh git curl
+sudo apt-get install -y zsh git curl fzf
 
 # --- oh-my-zsh + plugins ---
 echo "=== Installing oh-my-zsh ==="
@@ -36,6 +36,7 @@ fi
 
 # Configure .zshrc
 cat > "$HOME/.zshrc" << 'ZSHRC'
+export KUBECONFIG="$HOME/.kube/config"
 export ZSH="$HOME/.oh-my-zsh"
 
 ZSH_THEME="robbyrussell"
