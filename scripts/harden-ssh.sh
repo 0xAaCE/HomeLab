@@ -112,14 +112,31 @@ declare -A SETTINGS=(
   ["PermitRootLogin"]="prohibit-password"
 )
 
-for key in "${!SETTINGS[@]}"; do
-  value="${SETTINGS[$key]}"
-  if grep -qE "^#?\s*${key}\b" "$SSHD_CONFIG"; then
-    sed -i "s/^#*\s*${key}\b.*/${key} ${value}/" "$SSHD_CONFIG"
-  else
-    echo "${key} ${value}" >> "$SSHD_CONFIG"
-  fi
-done
+apply_settings() {
+  local file="$1"
+  for key in "${!SETTINGS[@]}"; do
+    value="${SETTINGS[$key]}"
+    if grep -qE "^#?\s*${key}\b" "$file"; then
+      sed -i "s/^#*\s*${key}\b.*/${key} ${value}/" "$file"
+    else
+      echo "${key} ${value}" >> "$file"
+    fi
+  done
+}
+
+apply_settings "$SSHD_CONFIG"
+
+# Override drop-in configs (e.g. cloud-init) that may re-enable password auth
+if [ -d /etc/ssh/sshd_config.d ]; then
+  for dropfile in /etc/ssh/sshd_config.d/*.conf; do
+    [ -f "$dropfile" ] || continue
+    if grep -qE "PasswordAuthentication|KbdInteractiveAuthentication|UsePAM|PermitRootLogin" "$dropfile"; then
+      echo "Fixing drop-in override: $dropfile"
+      cp "$dropfile" "${dropfile}.bak.$(date +%Y%m%d%H%M%S)"
+      apply_settings "$dropfile"
+    fi
+  done
+fi
 
 # Validate before restarting
 if sshd -t; then
