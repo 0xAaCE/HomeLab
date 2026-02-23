@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-server
+  namespace: code-server
+spec:
+  template:
+    spec:
+      volumes:
+      - name: host-documents
+        hostPath:
+          path: /home/ubuntu/Documents
+          type: DirectoryOrCreate
