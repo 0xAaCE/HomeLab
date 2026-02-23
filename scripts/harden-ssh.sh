@@ -123,7 +123,12 @@ done
 
 # Validate before restarting
 if sshd -t; then
-  systemctl restart sshd
+  # Ubuntu uses "ssh", other distros use "sshd"
+  if systemctl list-units --type=service | grep -q "ssh.service"; then
+    systemctl restart ssh
+  else
+    systemctl restart sshd
+  fi
   echo ""
   echo "SSH hardened. Password authentication is now disabled."
   echo ""
