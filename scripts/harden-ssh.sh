@@ -124,7 +124,7 @@ done
 # Validate before restarting
 if sshd -t; then
   # Ubuntu uses "ssh", other distros use "sshd"
-  if systemctl list-units --type=service | grep -q "ssh.service"; then
+  if systemctl is-active --quiet ssh 2>/dev/null; then
     systemctl restart ssh
   else
     systemctl restart sshd
