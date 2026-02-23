@@ -36,6 +36,7 @@ fi
 
 # Configure .zshrc
 cat > "$HOME/.zshrc" << 'ZSHRC'
+export PATH="$HOME/.local/bin:$PATH"
 export KUBECONFIG="$HOME/.kube/config"
 export ZSH="$HOME/.oh-my-zsh"
 
