@@ -7,6 +7,7 @@ GitOps-based homelab infrastructure using k3s and Argo CD for fully reproducible
 - [Architecture Overview](#architecture-overview)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Remote Access via Cloudflare WARP](#6-set-up-remote-access-via-cloudflare-warp)
 - [Repository Structure](#repository-structure)
 - [Components](#components)
 - [Secrets Management](#secrets-management)
@@ -21,6 +22,9 @@ GitOps-based homelab infrastructure using k3s and Argo CD for fully reproducible
 ┌─────────────────────────────────────────────────────────┐
 │                    Cloudflare Tunnel                     │
 │        (Secure external access without port forwarding) │
+│                                                         │
+│  Public hostnames ──→ Services (ArgoCD, Infisical, etc) │
+│  WARP (private)   ──→ SSH, internal services by LAN IP  │
 └──────────────────────┬──────────────────────────────────┘
                        │
 ┌──────────────────────┴──────────────────────────────────┐
@@ -211,6 +215,73 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 # Password: (from command above)
 ```
 
+### 6. Set Up Remote Access via Cloudflare WARP
+
+Cloudflare WARP allows you to SSH into the homelab (and access internal services) from anywhere, without exposing ports or creating public hostnames for every service.
+
+**How it works:**
+
+```
+Your device (WARP client) → Cloudflare edge → cloudflared pod in k3s → homelab LAN
+```
+
+All configuration is done in the [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com) — no k8s manifest changes needed.
+
+#### Step 1: Add a Private Network Route
+
+1. Go to **Networks → Routes → CIDR**
+2. Click **Add CIDR route**
+3. Enter your homelab's LAN IP (e.g. `192.168.1.50/32` for a single host, or `192.168.1.0/24` for the whole subnet)
+4. Select your cloudflared tunnel
+5. Save
+
+#### Step 2: Configure Split Tunnels
+
+By default, WARP excludes private IP ranges (like `192.168.0.0/16`) from the tunnel. You must remove this exclusion so traffic reaches your homelab.
+
+1. Go to **Settings → Devices → Device profiles**
+2. Click your profile (e.g. "Default") → **Configure**
+3. Scroll to **Split Tunnels** → click **Manage**
+4. Find `192.168.0.0/16` and **delete it**
+
+> **Note:** If your local network also uses `192.168.x.x`, you may lose local network access while WARP is connected. To avoid this, remove the `/16` and add back your specific local subnet (e.g. `192.168.1.0/24`) as an exclusion, while keeping your homelab IP routable.
+
+#### Step 3: Create a Device Enrollment Policy
+
+1. Go to **Settings → WARP Client → Device enrollment permissions → Manage**
+2. Add a rule:
+   - **Rule name:** `Allow my Google account`
+   - **Rule action:** Allow
+   - **Include:** Emails → your Google email address
+
+#### Step 4: Install and Enroll the WARP Client
+
+1. Download Cloudflare WARP from [https://one.one.one.one](https://one.one.one.one)
+2. Open WARP → Settings → Account → **Login to Cloudflare Zero Trust**
+3. Enter your team name (from `<team-name>.cloudflareaccess.com`)
+4. Authenticate with Google
+5. WARP should switch from "1.1.1.1" mode to **Zero Trust** mode
+
+#### Verify
+
+```bash
+# With WARP connected, SSH into the homelab
+ssh user@<homelab-lan-ip>
+
+# Disconnect WARP and confirm it's no longer reachable
+```
+
+#### Troubleshooting WARP
+
+```bash
+# Check if traffic is reaching the tunnel (run on a machine with kubectl access)
+kubectl logs -n cloudflared <pod-name> -f
+# Then try SSH from your WARP device — you should see log entries
+
+# The cloudflared container is minimal (no ping, wget, etc.)
+# Use kubectl logs as the primary debugging tool
+```
+
 ## Repository Structure
 
 ```
@@ -266,6 +337,7 @@ HomeLab/
 - No public IP exposure
 - Automatic TLS certificates
 - DDoS protection
+- **WARP integration** for private network access (SSH, internal services) from enrolled devices
 
 #### Infisical
 - Self-hosted secrets management
