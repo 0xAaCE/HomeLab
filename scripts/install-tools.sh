@@ -53,6 +53,11 @@ source $ZSH/oh-my-zsh.sh
 
 # kubectl autocomplete
 [[ -x /usr/local/bin/kubectl ]] && source <(kubectl completion zsh)
+
+# Auto-attach to zellij session
+if command -v zellij &>/dev/null && [ -z "$ZELLIJ" ]; then
+  zellij attach main --create
+fi
 ZSHRC
 
 # --- zellij ---
