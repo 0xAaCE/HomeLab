@@ -8,6 +8,7 @@ GitOps-based homelab infrastructure using k3s and Argo CD for fully reproducible
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Remote Access via Cloudflare WARP](#6-set-up-remote-access-via-cloudflare-warp)
+- [AWS Lightweight Deployment](#aws-lightweight-deployment)
 - [Repository Structure](#repository-structure)
 - [Components](#components)
 - [Secrets Management](#secrets-management)
@@ -282,6 +283,31 @@ kubectl logs -n cloudflared <pod-name> -f
 # Use kubectl logs as the primary debugging tool
 ```
 
+## AWS Lightweight Deployment
+
+A minimal deployment with only cloudflared and code-server — no ArgoCD or Infisical. Uses Kustomize overlays to reuse base manifests with AWS-specific config (e.g. `/home/ubuntu/Documents` instead of `/home/aace/Documents`).
+
+### Prerequisites
+
+- AWS EC2 instance (Ubuntu, 1+ CPU, 2GB+ RAM)
+- Cloudflare tunnel token (create at Zero Trust Dashboard → Networks → Tunnels)
+
+### Deploy
+
+```bash
+git clone git@github.com:0xAaCE/HomeLab.git
+cd HomeLab
+./environments/aws/deploy.sh
+```
+
+The script installs k3s, prompts for the tunnel token, and deploys cloudflared + code-server.
+
+### Post-deploy
+
+1. Add a private network route in Cloudflare for the AWS instance's VPC CIDR
+2. Connect via WARP and SSH into the instance
+3. Access code-server at its ClusterIP (`kubectl -n code-server get svc`)
+
 ## Repository Structure
 
 ```
@@ -303,6 +329,12 @@ HomeLab/
 │   ├── infisical-operator-config.yaml # Operator config application
 │   ├── infisical-operator/            # Operator configuration
 │   └── <your-app>.yaml                # Your application definitions
+├── environments/
+│   └── aws/
+│       ├── deploy.sh                    # k3s install + deploy (no ArgoCD)
+│       └── code-server/
+│           ├── kustomization.yaml       # Overlay referencing apps/code-server
+│           └── patch-volumes.yaml       # hostPath patch for AWS user
 ├── README.md                          # This file
 └── SECRETS.md                         # Secrets management guide
 ```
