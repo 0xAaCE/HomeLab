@@ -55,11 +55,32 @@ source $ZSH/oh-my-zsh.sh
 # kubectl autocomplete
 [[ -x /usr/local/bin/kubectl ]] && source <(kubectl completion zsh)
 
+# nvm
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
 # Auto-attach to zellij session
 if command -v zellij &>/dev/null && [ -z "$ZELLIJ" ]; then
   zellij attach main --create
 fi
 ZSHRC
+
+# --- nvm + Node.js LTS ---
+if [ ! -d "$HOME/.nvm" ]; then
+  echo "=== Installing nvm ==="
+  NVM_VERSION=$(curl -s https://api.github.com/repos/nvm-sh/nvm/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+  curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" | bash
+fi
+
+# Load nvm in current shell to install Node
+export NVM_DIR="$HOME/.nvm"
+# shellcheck source=/dev/null
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+echo "=== Installing Node.js LTS ==="
+nvm install --lts
+nvm use --lts
 
 # --- zellij ---
 if ! command -v zellij &>/dev/null; then
@@ -82,6 +103,7 @@ echo ""
 echo "  Shell:    zsh + oh-my-zsh (robbyrussell)"
 echo "  Plugins:  git, kubectl, fzf, autosuggestions, syntax-highlighting"
 echo "  Terminal: zellij"
+echo "  Node.js:  nvm + Node.js LTS"
 echo ""
 echo "Start a new shell with: exec zsh"
 echo "Start zellij with:      zellij"
