@@ -20,9 +20,8 @@ spec:
 
         ingress:
           enabled: false
-
-        ingress-nginx:
-          enabled: false
+          nginx:
+            enabled: false
 
         # Disable embedded databases - use our own
         postgresql:
