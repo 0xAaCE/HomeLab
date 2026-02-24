@@ -309,6 +309,28 @@ The script installs k3s, prompts for the tunnel token, and deploys cloudflared +
 2. Connect via WARP and SSH into the instance
 3. Access code-server at its ClusterIP (`kubectl -n code-server get svc`)
 
+## Dev Tools Setup
+
+Install a full developer shell environment on a fresh Ubuntu server:
+
+```bash
+./scripts/install-tools.sh
+```
+
+**Installs:**
+
+| Tool | Details |
+|------|---------|
+| **zsh** | Shell + oh-my-zsh (robbyrussell theme) |
+| **oh-my-zsh plugins** | git, kubectl, fzf, zsh-autosuggestions, zsh-syntax-highlighting |
+| **nvm** | Latest release, auto-detected from GitHub |
+| **Node.js** | LTS version via `nvm install --lts` |
+| **zellij** | Terminal multiplexer (latest release) |
+
+nvm and Node.js are sourced automatically in every new zsh session via `.zshrc`.
+
+> The script must not be run as root. It uses `sudo` internally where needed.
+
 ## SSH Hardening
 
 Disable password authentication and allow only SSH key-based login.
@@ -347,6 +369,7 @@ HomeLab/
 │   └── ssh/                            # SSH public keys (.pub files)
 ├── scripts/
 │   ├── setup.sh                       # k3s + Argo CD installation
+│   ├── install-tools.sh               # Dev tools: zsh, oh-my-zsh, nvm, Node.js LTS, zellij
 │   └── harden-ssh.sh                  # Disable password auth, install SSH keys
 ├── argocd/
 │   ├── app-of-apps.yaml               # Root application (GitOps bootstrap)
