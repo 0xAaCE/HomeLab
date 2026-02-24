@@ -91,6 +91,17 @@ if ! command -v zellij &>/dev/null; then
   rm /tmp/zellij.tar.gz
 fi
 
+# --- zellij config ---
+ZELLIJ_CONFIG_DIR="$HOME/.config/zellij"
+ZELLIJ_CONFIG="$ZELLIJ_CONFIG_DIR/config.kdl"
+mkdir -p "$ZELLIJ_CONFIG_DIR"
+if [ ! -f "$ZELLIJ_CONFIG" ]; then
+  zellij setup --dump-config > "$ZELLIJ_CONFIG"
+fi
+if ! grep -q "^session_serialization false" "$ZELLIJ_CONFIG"; then
+  echo "session_serialization false" >> "$ZELLIJ_CONFIG"
+fi
+
 # Set zsh as default shell
 if [ "$SHELL" != "$(which zsh)" ]; then
   echo "=== Setting zsh as default shell ==="
